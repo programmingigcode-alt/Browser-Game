@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig({
-  base: './',
+  base: '/',
   plugins: [react()],
   server: {
     allowedHosts: ['primal-fracture.onrender.com'],
@@ -14,8 +14,17 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'docs', // This tells Vite to name the folder 'docs' instead of 'dist'
+    outDir: 'dist',
     sourcemap: true,
-    chunkSizeWarningLimit: 1000,
+    chunkSizeWarningLimit: 1600,
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (['three', '@react-three/fiber', '@react-three/drei', '@react-three/postprocessing'].some(pkg => id.includes(pkg))) {
+            return 'vendor';
+          }
+        },
+      },
+    },
   },
 });
