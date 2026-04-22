@@ -195,6 +195,7 @@ const SettingsMenu = ({ state, dispatch, onBack }: {
                   shadows: q !== 'Low',
                   postProcessing: q !== 'Low',
                   renderScale: q === 'Low' ? 0.6 : q === 'Medium' ? 0.85 : 1.0,
+                  particleDensity: q === 'Low' ? 30 : 50,
                 });
               }}
             />
@@ -214,6 +215,10 @@ const SettingsMenu = ({ state, dispatch, onBack }: {
             <SliderRow
               label="Field of View" value={state.settings.fov} min={60} max={110} unit="°"
               onChange={v => set({ fov: v })}
+            />
+            <SliderRow
+              label="Particle Density" value={state.settings.particleDensity} min={0} max={100}
+              unit="%" onChange={v => set({ particleDensity: v })}
             />
 
             <div className="border-t border-white/10 pt-4 text-red-500 text-[10px] font-black uppercase tracking-widest">

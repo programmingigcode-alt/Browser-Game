@@ -66,6 +66,7 @@ export interface Settings {
   showFps: boolean;
   fov: number;               // 60-110
   keybinds: Keybinds;
+  particleDensity: number;   // 0-100
 }
 
 export interface GameState {

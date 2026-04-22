@@ -2,78 +2,95 @@ import React, { useRef, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 
-interface Particle {
-  position: THREE.Vector3;
-  velocity: THREE.Vector3;
-  life: number;
-  maxLife: number;
+// --- Reusable Math Objects to avoid allocations ---
+const tempObj = new THREE.Object3D();
+const tempColor = new THREE.Color();
+const tempVel = new THREE.Vector3();
+
+// Particle structure for pool
+class ParticleData {
+  position = new THREE.Vector3();
+  velocity = new THREE.Vector3();
+  life = 0;
+  maxLife = 0;
+  active = false;
 }
 
-// Blood splatter particles — triggered by 'blood-splatter' custom events
-export function BloodParticles({ quality }: { quality: string }) {
-  const maxParticles = quality === 'Low' ? 20 : quality === 'Medium' ? 40 : 80;
-  const particles = useRef<Particle[]>([]);
+// ─── Blood splatter particles ───────────────────────────────────────
+export function BloodParticles({ quality, density }: { quality: string, density: number }) {
+  const maxParticles = useMemo(() => {
+    const base = quality === 'Low' ? 40 : quality === 'Medium' ? 80 : 160;
+    return Math.max(1, Math.floor(base * (density / 100)));
+  }, [quality, density]);
+
+  const pool = useRef<ParticleData[]>([]);
   const meshRef = useRef<THREE.InstancedMesh>(null);
-  const tempObj = useRef(new THREE.Object3D());
-  const tempColor = useRef(new THREE.Color());
-  const tempVel = useRef(new THREE.Vector3());
+  const nextIdx = useRef(0);
+
+  // Initialize pool once
+  if (pool.current.length === 0) {
+    pool.current = Array.from({ length: 400 }, () => new ParticleData());
+  }
 
   useEffect(() => {
     const handleBlood = (e: any) => {
       const pos = e.detail.position;
-      const count = quality === 'Low' ? 3 : quality === 'Medium' ? 6 : 10;
+      const count = Math.max(1, Math.floor((quality === 'Low' ? 4 : quality === 'Medium' ? 8 : 12) * (density / 100)));
+
       for (let i = 0; i < count; i++) {
-        if (particles.current.length >= maxParticles) {
-          particles.current.shift();
-        }
-        particles.current.push({
-          position: new THREE.Vector3(pos[0], pos[1], pos[2]),
-          velocity: new THREE.Vector3(
-            (Math.random() - 0.5) * 4,
-            Math.random() * 3,
-            (Math.random() - 0.5) * 4
-          ),
-          life: 1.0,
-          maxLife: 0.5 + Math.random() * 0.5,
-        });
+        const p = pool.current[nextIdx.current];
+        p.position.set(pos[0], pos[1], pos[2]);
+        p.velocity.set(
+          (Math.random() - 0.5) * 4,
+          Math.random() * 3,
+          (Math.random() - 0.5) * 4
+        );
+        p.life = 1.0;
+        p.maxLife = 0.5 + Math.random() * 0.5;
+        p.active = true;
+        nextIdx.current = (nextIdx.current + 1) % maxParticles;
       }
     };
     window.addEventListener('blood-splatter', handleBlood);
     return () => window.removeEventListener('blood-splatter', handleBlood);
-  }, [quality, maxParticles]);
+  }, [quality, density, maxParticles]);
 
   useFrame((_, delta) => {
     if (!meshRef.current) return;
     const dt = Math.min(delta, 0.1);
     
-    // Update particles
-    particles.current = particles.current.filter(p => {
-      p.life -= dt / p.maxLife;
-      p.velocity.y -= 9.8 * dt; // gravity
-      tempVel.current.copy(p.velocity).multiplyScalar(dt);
-      p.position.add(tempVel.current);
-      return p.life > 0;
-    });
-
-    // Update instances
     for (let i = 0; i < maxParticles; i++) {
-      if (i < particles.current.length) {
-        const p = particles.current[i];
-        tempObj.current.position.copy(p.position);
-        const scale = p.life * 0.08;
-        tempObj.current.scale.set(scale, scale, scale);
-        tempObj.current.updateMatrix();
-        meshRef.current.setMatrixAt(i, tempObj.current.matrix);
-        
-        // Red to dark red fade
-        tempColor.current.setHSL(0, 1, 0.15 + p.life * 0.35);
-        meshRef.current.setColorAt(i, tempColor.current);
-      } else {
-        tempObj.current.position.set(0, -100, 0);
-        tempObj.current.scale.set(0, 0, 0);
-        tempObj.current.updateMatrix();
-        meshRef.current.setMatrixAt(i, tempObj.current.matrix);
+      const p = pool.current[i];
+      if (!p.active) {
+        tempObj.position.set(0, -100, 0);
+        tempObj.scale.set(0, 0, 0);
+        tempObj.updateMatrix();
+        meshRef.current.setMatrixAt(i, tempObj.matrix);
+        continue;
       }
+
+      p.life -= dt / p.maxLife;
+      if (p.life <= 0) {
+        p.active = false;
+        tempObj.position.set(0, -100, 0);
+        tempObj.scale.set(0, 0, 0);
+        tempObj.updateMatrix();
+        meshRef.current.setMatrixAt(i, tempObj.matrix);
+        continue;
+      }
+
+      p.velocity.y -= 9.8 * dt; // gravity
+      tempVel.copy(p.velocity).multiplyScalar(dt);
+      p.position.add(tempVel);
+
+      tempObj.position.copy(p.position);
+      const scale = p.life * 0.08;
+      tempObj.scale.set(scale, scale, scale);
+      tempObj.updateMatrix();
+      meshRef.current.setMatrixAt(i, tempObj.matrix);
+
+      tempColor.setHSL(0, 1, 0.15 + p.life * 0.35);
+      meshRef.current.setColorAt(i, tempColor);
     }
     meshRef.current.instanceMatrix.needsUpdate = true;
     if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
@@ -87,67 +104,75 @@ export function BloodParticles({ quality }: { quality: string }) {
   );
 }
 
-// Shell casing particles — triggered by 'shell-eject' custom events
-export function ShellParticles({ quality }: { quality: string }) {
-  if (quality === 'Low') return null;
+// ─── Shell casing particles ─────────────────────────────────────────
+export function ShellParticles({ quality, density }: { quality: string, density: number }) {
+  const maxParticles = useMemo(() => {
+    if (quality === 'Low' || density === 0) return 0;
+    const base = quality === 'Medium' ? 20 : 40;
+    return Math.max(1, Math.floor(base * (density / 100)));
+  }, [quality, density]);
   
-  const maxParticles = quality === 'Medium' ? 10 : 20;
-  const particles = useRef<Particle[]>([]);
+  const pool = useRef<ParticleData[]>([]);
   const meshRef = useRef<THREE.InstancedMesh>(null);
-  const tempObj = useRef(new THREE.Object3D());
-  const tempVel = useRef(new THREE.Vector3());
+  const nextIdx = useRef(0);
+
+  if (pool.current.length === 0) {
+    pool.current = Array.from({ length: 100 }, () => new ParticleData());
+  }
 
   useEffect(() => {
+    if (maxParticles === 0) return;
     const handleShell = (e: any) => {
       const pos = e.detail.position;
-      if (particles.current.length >= maxParticles) {
-        particles.current.shift();
-      }
-      particles.current.push({
-        position: new THREE.Vector3(pos[0], pos[1], pos[2]),
-        velocity: new THREE.Vector3(
-          (Math.random() - 0.5) * 2 + 1,
-          Math.random() * 2 + 1,
-          (Math.random() - 0.5) * 2
-        ),
-        life: 1.0,
-        maxLife: 1.0,
-      });
+      const p = pool.current[nextIdx.current];
+      p.position.set(pos[0], pos[1], pos[2]);
+      p.velocity.set(
+        (Math.random() - 0.5) * 2 + 1,
+        Math.random() * 2 + 1,
+        (Math.random() - 0.5) * 2
+      );
+      p.life = 1.0;
+      p.maxLife = 2.0;
+      p.active = true;
+      nextIdx.current = (nextIdx.current + 1) % maxParticles;
     };
     window.addEventListener('shell-eject', handleShell);
     return () => window.removeEventListener('shell-eject', handleShell);
   }, [maxParticles]);
 
   useFrame((_, delta) => {
-    if (!meshRef.current) return;
+    if (!meshRef.current || maxParticles === 0) return;
     const dt = Math.min(delta, 0.1);
     
-    particles.current = particles.current.filter(p => {
+    for (let i = 0; i < maxParticles; i++) {
+      const p = pool.current[i];
+      if (!p.active) {
+        tempObj.position.set(0, -100, 0);
+        tempObj.updateMatrix();
+        meshRef.current.setMatrixAt(i, tempObj.matrix);
+        continue;
+      }
+
       p.life -= dt / p.maxLife;
-      p.velocity.y -= 9.8 * dt;
-      tempVel.current.copy(p.velocity).multiplyScalar(dt);
-      p.position.add(tempVel.current);
-      if (p.position.y < 0) {
-        p.position.y = 0;
+      if (p.life <= 0) {
+        p.active = false;
+        continue;
+      }
+
+      if (p.position.y > 0.05) {
+        p.velocity.y -= 9.8 * dt;
+        tempVel.copy(p.velocity).multiplyScalar(dt);
+        p.position.add(tempVel);
+      } else {
+        p.position.y = 0.05;
         p.velocity.set(0, 0, 0);
       }
-      return p.life > 0;
-    });
 
-    for (let i = 0; i < maxParticles; i++) {
-      if (i < particles.current.length) {
-        const p = particles.current[i];
-        tempObj.current.position.copy(p.position);
-        tempObj.current.rotation.set(p.life * 10, p.life * 5, 0);
-        tempObj.current.scale.set(0.03, 0.03, 0.06);
-        tempObj.current.updateMatrix();
-        meshRef.current.setMatrixAt(i, tempObj.current.matrix);
-      } else {
-        tempObj.current.position.set(0, -100, 0);
-        tempObj.current.scale.set(0, 0, 0);
-        tempObj.current.updateMatrix();
-        meshRef.current.setMatrixAt(i, tempObj.current.matrix);
-      }
+      tempObj.position.copy(p.position);
+      tempObj.rotation.set(p.life * 10, p.life * 5, 0);
+      tempObj.scale.set(0.03, 0.03, 0.06);
+      tempObj.updateMatrix();
+      meshRef.current.setMatrixAt(i, tempObj.matrix);
     }
     meshRef.current.instanceMatrix.needsUpdate = true;
   });
@@ -155,69 +180,78 @@ export function ShellParticles({ quality }: { quality: string }) {
   const geo = useMemo(() => new THREE.CylinderGeometry(1, 1, 1, 6), []);
   const mat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#c4a000', metalness: 0.9, roughness: 0.3 }), []);
 
+  if (maxParticles === 0) return null;
   return (
     <instancedMesh ref={meshRef} args={[geo, mat, maxParticles]} frustumCulled={false} />
   );
 }
 
-// Muzzle smoke — triggered by 'muzzle-smoke' custom events
-export function MuzzleSmokeParticles({ quality }: { quality: string }) {
-  if (quality === 'Low') return null;
-  
-  const maxParticles = quality === 'Medium' ? 15 : 30;
-  const particles = useRef<Particle[]>([]);
+// ─── Muzzle smoke ───────────────────────────────────────────────────
+export function MuzzleSmokeParticles({ quality, density }: { quality: string, density: number }) {
+  const maxParticles = useMemo(() => {
+    if (quality === 'Low' || density === 0) return 0;
+    const base = quality === 'Medium' ? 30 : 60;
+    return Math.max(1, Math.floor(base * (density / 100)));
+  }, [quality, density]);
+
+  const pool = useRef<ParticleData[]>([]);
   const meshRef = useRef<THREE.InstancedMesh>(null);
-  const tempObj = useRef(new THREE.Object3D());
-  const tempVel = useRef(new THREE.Vector3());
+  const nextIdx = useRef(0);
+
+  if (pool.current.length === 0) {
+    pool.current = Array.from({ length: 100 }, () => new ParticleData());
+  }
 
   useEffect(() => {
+    if (maxParticles === 0) return;
     const handleSmoke = (e: any) => {
       const pos = e.detail.position;
-      const count = quality === 'Medium' ? 5 : 10;
+      const count = Math.max(1, Math.floor((quality === 'Medium' ? 3 : 5) * (density / 100)));
       for (let i = 0; i < count; i++) {
-        if (particles.current.length >= maxParticles) {
-          particles.current.shift();
-        }
-        particles.current.push({
-          position: new THREE.Vector3(pos[0], pos[1], pos[2]),
-          velocity: new THREE.Vector3(
-            (Math.random() - 0.5) * 0.5,
-            Math.random() * 0.5 + 0.2,
-            (Math.random() - 0.5) * 0.5
-          ),
-          life: 1.0,
-          maxLife: 0.3 + Math.random() * 0.3,
-        });
+        const p = pool.current[nextIdx.current];
+        p.position.set(pos[0], pos[1], pos[2]);
+        p.velocity.set(
+          (Math.random() - 0.5) * 0.5,
+          Math.random() * 0.5 + 0.2,
+          (Math.random() - 0.5) * 0.5
+        );
+        p.life = 1.0;
+        p.maxLife = 0.3 + Math.random() * 0.3;
+        p.active = true;
+        nextIdx.current = (nextIdx.current + 1) % maxParticles;
       }
     };
     window.addEventListener('muzzle-smoke', handleSmoke);
     return () => window.removeEventListener('muzzle-smoke', handleSmoke);
-  }, [quality, maxParticles]);
+  }, [quality, density, maxParticles]);
 
   useFrame((_, delta) => {
-    if (!meshRef.current) return;
+    if (!meshRef.current || maxParticles === 0) return;
     const dt = Math.min(delta, 0.1);
     
-    particles.current = particles.current.filter(p => {
-      p.life -= dt / p.maxLife;
-      p.position.add(tempVel.current.copy(p.velocity).multiplyScalar(dt));
-      return p.life > 0;
-    });
-
     for (let i = 0; i < maxParticles; i++) {
-      if (i < particles.current.length) {
-        const p = particles.current[i];
-        tempObj.current.position.copy(p.position);
-        const scale = (1 - p.life) * 0.15 + 0.02;
-        tempObj.current.scale.set(scale, scale, scale);
-        tempObj.current.updateMatrix();
-        meshRef.current.setMatrixAt(i, tempObj.current.matrix);
-      } else {
-        tempObj.current.position.set(0, -100, 0);
-        tempObj.current.scale.set(0, 0, 0);
-        tempObj.current.updateMatrix();
-        meshRef.current.setMatrixAt(i, tempObj.current.matrix);
+      const p = pool.current[i];
+      if (!p.active) {
+        tempObj.position.set(0, -100, 0);
+        tempObj.updateMatrix();
+        meshRef.current.setMatrixAt(i, tempObj.matrix);
+        continue;
       }
+
+      p.life -= dt / p.maxLife;
+      if (p.life <= 0) {
+        p.active = false;
+        continue;
+      }
+
+      tempVel.copy(p.velocity).multiplyScalar(dt);
+      p.position.add(tempVel);
+
+      tempObj.position.copy(p.position);
+      const scale = (1 - p.life) * 0.15 + 0.02;
+      tempObj.scale.set(scale, scale, scale);
+      tempObj.updateMatrix();
+      meshRef.current.setMatrixAt(i, tempObj.matrix);
     }
     meshRef.current.instanceMatrix.needsUpdate = true;
   });
@@ -225,6 +259,7 @@ export function MuzzleSmokeParticles({ quality }: { quality: string }) {
   const geo = useMemo(() => new THREE.SphereGeometry(1, 6, 6), []);
   const mat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#888888', transparent: true, opacity: 0.3 }), []);
 
+  if (maxParticles === 0) return null;
   return (
     <instancedMesh ref={meshRef} args={[geo, mat, maxParticles]} frustumCulled={false} />
   );

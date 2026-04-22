@@ -176,13 +176,17 @@ function PlayerTracker({ terrainType, sfxVolume, masterVolume, footstepVolume, m
     
     const newStealth = state.stealthLevel + (targetStealth - state.stealthLevel) * 0.05;
     const newRunning = isSprinting && isMoving;
-    // Only call setState when something meaningful changed
-    if (Math.abs(newStealth - state.stealthLevel) > 0.005 || newRunning !== state.isRunning || state.screenShake > 0.01) {
+    // Only call setState when something meaningful changed (thresholds to reduce re-renders)
+    const stealthChanged = Math.abs(newStealth - state.stealthLevel) > 0.02;
+    const runningChanged = newRunning !== state.isRunning;
+    const shakeChanged = state.screenShake > 0.01;
+
+    if (stealthChanged || runningChanged || shakeChanged) {
       setState(prev => ({
         ...prev, 
-        stealthLevel: prev.stealthLevel + (targetStealth - prev.stealthLevel) * 0.05,
-        isRunning: newRunning,
-        screenShake: prev.screenShake > 0.01 ? Math.max(0, prev.screenShake - dt * 4) : 0,
+        stealthLevel: stealthChanged ? newStealth : prev.stealthLevel,
+        isRunning: runningChanged ? newRunning : prev.isRunning,
+        screenShake: shakeChanged ? Math.max(0, prev.screenShake - dt * 4) : 0,
       }));
     }
 
@@ -308,6 +312,7 @@ export default function App() {
       renderScale: DEFAULT_QUALITY === 'Low' ? 0.6 : 1.0,
       showFps: false,
       fov: 75,
+      particleDensity: 50,
       keybinds: {
         moveForward: 'KeyW', moveBackward: 'KeyS', moveLeft: 'KeyA', moveRight: 'KeyD',
         sprint: 'ShiftLeft', crouch: 'KeyC', reload: 'KeyR', medikit: 'KeyQ',
@@ -776,9 +781,9 @@ export default function App() {
         />
 
         {/* Particle Systems */}
-        <BloodParticles quality={state.settings.quality} />
-        <ShellParticles quality={state.settings.quality} />
-        <MuzzleSmokeParticles quality={state.settings.quality} />
+        <BloodParticles quality={state.settings.quality} density={state.settings.particleDensity} />
+        <ShellParticles quality={state.settings.quality} density={state.settings.particleDensity} />
+        <MuzzleSmokeParticles quality={state.settings.quality} density={state.settings.particleDensity} />
 
         {/* Post-Processing — skipped entirely if disabled in settings or on Low quality */}
         <PostProcessing

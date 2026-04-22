@@ -214,7 +214,7 @@ const Minimap = ({ playerPos, enemies, medikits, weaponPickups, ammoPickups, obj
   );
 };
 
-const HUD = ({ state, playerPos, enemies, medikits, weaponPickups, ammoPickups, nearPickup, showFpsOverride }: { 
+const HUD = React.memo(({ state, playerPos, enemies, medikits, weaponPickups, ammoPickups, nearPickup, showFpsOverride }: {
   state: GameState, 
   playerPos: React.MutableRefObject<THREE.Vector3>,
   enemies: React.MutableRefObject<any[]>,
@@ -465,6 +465,30 @@ const HUD = ({ state, playerPos, enemies, medikits, weaponPickups, ammoPickups, 
       )}
     </div>
   );
-};
+}, (prev, next) => {
+  // Custom comparison to reduce re-renders.
+  // HUD only needs to update when visible stats change.
+  const currentWeaponIdx = next.state.currentWeaponIndex;
+  const prevWeaponIdx = prev.state.currentWeaponIndex;
+
+  return prev.state.health === next.state.health &&
+         prev.state.medikits === next.state.medikits &&
+         Math.abs(prev.state.stealthLevel - next.state.stealthLevel) < 0.01 &&
+         prev.state.enemiesKilled === next.state.enemiesKilled &&
+         prev.state.totalEnemiesInLevel === next.state.totalEnemiesInLevel &&
+         currentWeaponIdx === prevWeaponIdx &&
+         prev.state.weapons[prevWeaponIdx]?.ammo === next.state.weapons[currentWeaponIdx]?.ammo &&
+         prev.state.weapons[prevWeaponIdx]?.reserve === next.state.weapons[currentWeaponIdx]?.reserve &&
+         prev.nearPickup === next.nearPickup &&
+         prev.state.isCrouching === next.state.isCrouching &&
+         prev.state.isRunning === next.state.isRunning &&
+         prev.state.isReloading === next.state.isReloading &&
+         prev.state.isPaused === next.state.isPaused &&
+         prev.state.damageDirectionTime === next.state.damageDirectionTime &&
+         prev.state.killFeedTime === next.state.killFeedTime &&
+         prev.state.lastHitTime === next.state.lastHitTime &&
+         prev.state.screenShake === next.state.screenShake &&
+         prev.showFpsOverride === next.showFpsOverride;
+});
 
 export default HUD;

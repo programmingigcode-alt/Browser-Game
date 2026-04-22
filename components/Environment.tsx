@@ -43,42 +43,71 @@ const fbm = (x: number, z: number, octaves: number, lacunarity: number, gain: nu
   return value / maxValue;
 };
 
+// ─── Terrain Height Cache ───────────────────────────────────────────
+// Cache last few lookups to avoid redundant FBM noise calculations
+// Especially useful when multiple systems (AI, particles, player) query same area
+const HEIGHT_CACHE_SIZE = 16;
+const heightCache: { [key: string]: { x: number, z: number, h: number, t: string }[] } = {};
+
 // ─── Terrain Height Function — used by all systems ──────────────────
 // quality parameter: pass 'Low' to use fewer octaves on iGPU
 export const getTerrainHeight = (x: number, z: number, terrainType: string, lowQ = false): number => {
+  // Simple spatial hashing for cache
+  const gridX = Math.round(x * 10) / 10;
+  const gridZ = Math.round(z * 10) / 10;
+
+  if (!heightCache[terrainType]) heightCache[terrainType] = [];
+  const cache = heightCache[terrainType];
+  const cached = cache.find(c => c.x === gridX && c.z === gridZ);
+  if (cached) return cached.h;
+
   const oct = (high: number) => lowQ ? Math.min(2, Math.ceil(high / 2)) : high;
+  let height = 0;
+
   switch (terrainType) {
     case 'jungle': {
       const base = fbm(x * 0.008, z * 0.008, oct(6), 2.2, 0.48) * 18;
-      if (lowQ) return base;
+      if (lowQ) { height = base; break; }
       const ridge = Math.max(0, fbm(x * 0.004 + 50, z * 0.004 + 50, 4, 2.0, 0.5) - 0.55) * 40;
-      return base + ridge;
+      height = base + ridge;
+      break;
     }
     case 'shore': {
       const dune = fbm(x * 0.012, z * 0.012, oct(4), 2.0, 0.45) * 5;
       const slope = Math.max(0, -z * 0.01);
-      return Math.max(-0.5, dune - slope);
+      height = Math.max(-0.5, dune - slope);
+      break;
     }
     case 'volcanic': {
       const raw = fbm(x * 0.006, z * 0.006, oct(5), 2.5, 0.55) * 30;
-      if (lowQ) return raw;
+      if (lowQ) { height = raw; break; }
       const sharp = Math.pow(Math.abs(fbm(x * 0.015, z * 0.015, 3, 2.0, 0.6) - 0.5) * 2, 1.5) * 15;
-      return raw + sharp;
+      height = raw + sharp;
+      break;
     }
     case 'prison':
-      return fbm(x * 0.02, z * 0.02, 2, 2.0, 0.4) * 1.5;
+      height = fbm(x * 0.02, z * 0.02, 2, 2.0, 0.4) * 1.5;
+      break;
     case 'port':
       // Flat dockyard — very slight undulation, mostly concrete/asphalt
-      return fbm(x * 0.025, z * 0.025, 2, 2.0, 0.35) * 0.8;
+      height = fbm(x * 0.025, z * 0.025, 2, 2.0, 0.35) * 0.8;
+      break;
     case 'base':
       // Military camp — slightly more undulation than port, packed dirt
-      return fbm(x * 0.015, z * 0.015, 3, 2.0, 0.42) * 2.0;
+      height = fbm(x * 0.015, z * 0.015, 3, 2.0, 0.42) * 2.0;
+      break;
     case 'ruins': {
-      return fbm(x * 0.01, z * 0.01, oct(4), 2.0, 0.5) * 6;
+      height = fbm(x * 0.01, z * 0.01, oct(4), 2.0, 0.5) * 6;
+      break;
     }
     default:
-      return fbm(x * 0.008, z * 0.008, oct(5), 2.2, 0.48) * 12;
+      height = fbm(x * 0.008, z * 0.008, oct(5), 2.2, 0.48) * 12;
+      break;
   }
+
+  cache.push({ x: gridX, z: gridZ, h: height, t: terrainType });
+  if (cache.length > HEIGHT_CACHE_SIZE) cache.shift();
+  return height;
 };
 
 // Legacy noise for water-area check
